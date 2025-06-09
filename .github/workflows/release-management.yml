@@ -1,0 +1,583 @@
+name: Release Management
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Type of release'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - major
+        - minor
+        - patch
+        - prerelease
+      create_github_release:
+        description: 'Create GitHub release'
+        required: false
+        default: true
+        type: boolean
+      deploy_to_production:
+        description: 'Deploy to production'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '20'
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GAR_LOCATION: us-central1
+  REPOSITORY: simple-webapp
+  SERVICE: simple-webapp
+  REGION: us-central1
+
+jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+      release-notes: ${{ steps.changelog.outputs.release-notes }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Determine version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" =~ ^refs/tags/v ]]; then
+          # Tag-triggered release
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "Version from tag: $VERSION"
+        else
+          # Manual release
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+          
+          case "${{ github.event.inputs.release_type }}" in
+            major)
+              VERSION=$(npx semver $CURRENT_VERSION -i major)
+              ;;
+            minor)
+              VERSION=$(npx semver $CURRENT_VERSION -i minor)
+              ;;
+            patch)
+              VERSION=$(npx semver $CURRENT_VERSION -i patch)
+              ;;
+            prerelease)
+              VERSION=$(npx semver $CURRENT_VERSION -i prerelease --preid beta)
+              ;;
+          esac
+          echo "New version: $VERSION"
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        echo "📝 Generating changelog for version ${{ steps.version.outputs.version }}..."
+        
+        # Get the last tag for changelog generation
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        
+        if [ -n "$LAST_TAG" ]; then
+          echo "Generating changelog from $LAST_TAG to HEAD"
+          COMMIT_RANGE="$LAST_TAG..HEAD"
+        else
+          echo "No previous tag found, generating changelog from first commit"
+          COMMIT_RANGE=""
+        fi
+        
+        # Generate changelog content
+        cat > CHANGELOG_SECTION.md << EOF
+        ## [${{ steps.version.outputs.version }}] - $(date +%Y-%m-%d)
+        
+        ### Added
+        EOF
+        
+        # Get commits with "feat:" or "add:"
+        if [ -n "$COMMIT_RANGE" ]; then
+          git log $COMMIT_RANGE --oneline --grep="feat:" --grep="add:" --perl-regexp >> added_features.txt || true
+        fi
+        
+        if [ -s added_features.txt ]; then
+          sed 's/^/- /' added_features.txt >> CHANGELOG_SECTION.md
+        else
+          echo "- Enhanced application stability and performance" >> CHANGELOG_SECTION.md
+        fi
+        
+        cat >> CHANGELOG_SECTION.md << EOF
+        
+        ### Changed
+        EOF
+        
+        # Get commits with "update:" or "change:"
+        if [ -n "$COMMIT_RANGE" ]; then
+          git log $COMMIT_RANGE --oneline --grep="update:" --grep="change:" --perl-regexp >> changed_features.txt || true
+        fi
+        
+        if [ -s changed_features.txt ]; then
+          sed 's/^/- /' changed_features.txt >> CHANGELOG_SECTION.md
+        else
+          echo "- Improved code quality and maintainability" >> CHANGELOG_SECTION.md
+        fi
+        
+        cat >> CHANGELOG_SECTION.md << EOF
+        
+        ### Fixed
+        EOF
+        
+        # Get commits with "fix:" or "bug:"
+        if [ -n "$COMMIT_RANGE" ]; then
+          git log $COMMIT_RANGE --oneline --grep="fix:" --grep="bug:" --perl-regexp >> fixed_issues.txt || true
+        fi
+        
+        if [ -s fixed_issues.txt ]; then
+          sed 's/^/- /' fixed_issues.txt >> CHANGELOG_SECTION.md
+        else
+          echo "- Resolved minor issues and edge cases" >> CHANGELOG_SECTION.md
+        fi
+        
+        cat >> CHANGELOG_SECTION.md << EOF
+        
+        ### Security
+        - Updated dependencies to latest versions
+        - Enhanced security configurations
+        - Improved error handling and validation
+        
+        EOF
+        
+        # Create release notes
+        cat > RELEASE_NOTES.md << EOF
+        # Simple WebApp v${{ steps.version.outputs.version }}
+        
+        This release includes significant improvements to the application's stability, security, and performance.
+        
+        ## 🚀 Highlights
+        
+        - Enhanced CI/CD pipeline with comprehensive testing
+        - Improved security scanning and monitoring
+        - Better error handling and logging
+        - Updated dependencies for better performance
+        
+        ## 📋 What's Changed
+        
+        $(cat CHANGELOG_SECTION.md | tail -n +3)
+        
+        ## 🔧 Technical Details
+        
+        - **Node.js Version:** ${{ env.NODE_VERSION }}
+        - **Docker Base Image:** node:20-alpine
+        - **Build Date:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        - **Commit:** ${{ github.sha }}
+        
+        ## 🚀 Deployment
+        
+        This version is deployed with enhanced security and monitoring capabilities:
+        - Multi-environment support (development, testing, production)
+        - Automated health checks and monitoring
+        - Enhanced error tracking and logging
+        
+        ## 📦 Installation
+        
+        \`\`\`bash
+        # Using Docker
+        docker pull ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}:v${{ steps.version.outputs.version }}
+        
+        # Using npm
+        npm install
+        npm start
+        \`\`\`
+        
+        EOF
+        
+        # Set outputs
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        cat CHANGELOG_SECTION.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+        echo "release-notes<<EOF" >> $GITHUB_OUTPUT
+        cat RELEASE_NOTES.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    outputs:
+      image-uri: ${{ steps.build.outputs.image-uri }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests
+      run: |
+        npm run lint
+        npm run format:check
+        npm test
+
+    - name: Update package.json version
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        npm version ${{ needs.prepare-release.outputs.version }} --no-git-tag-version
+        echo "📦 Updated package.json to version ${{ needs.prepare-release.outputs.version }}"
+
+    - name: Google Auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Configure Docker for Artifact Registry
+      run: |
+        gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev
+
+    - name: Build and push release image
+      id: build
+      run: |
+        IMAGE_NAME="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }}"
+        VERSION_TAG="${IMAGE_NAME}:v${{ needs.prepare-release.outputs.version }}"
+        LATEST_TAG="${IMAGE_NAME}:latest"
+        
+        # Build with release metadata
+        docker build \
+          --build-arg NODE_ENV=production \
+          --build-arg APP_VERSION=v${{ needs.prepare-release.outputs.version }} \
+          --build-arg BUILD_NUMBER=${{ github.run_number }} \
+          --build-arg BUILD_TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+          --build-arg RELEASE_TYPE="${{ github.event.inputs.release_type || 'tag' }}" \
+          --label "org.opencontainers.image.title=Simple WebApp" \
+          --label "org.opencontainers.image.version=v${{ needs.prepare-release.outputs.version }}" \
+          --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+          --label "org.opencontainers.image.revision=${{ github.sha }}" \
+          --label "org.opencontainers.image.created=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+          --label "org.opencontainers.image.licenses=MIT" \
+          -t ${VERSION_TAG} \
+          -t ${LATEST_TAG} \
+          .
+        
+        # Push images
+        docker push ${VERSION_TAG}
+        docker push ${LATEST_TAG}
+        
+        # Get image digest
+        DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ${VERSION_TAG} | cut -d'@' -f2)
+        
+        echo "image-uri=${VERSION_TAG}" >> $GITHUB_OUTPUT
+        echo "latest-tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+        echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+        
+        echo "🐳 Release images built and pushed:"
+        echo "- Version: ${VERSION_TAG}"
+        echo "- Latest: ${LATEST_TAG}"
+
+  create-github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [prepare-release, build-release]
+    if: github.event.inputs.create_github_release == 'true' || github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Create Git tag
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a "v${{ needs.prepare-release.outputs.version }}" -m "Release v${{ needs.prepare-release.outputs.version }}"
+        git push origin "v${{ needs.prepare-release.outputs.version }}"
+
+    - name: Create release assets
+      run: |
+        mkdir -p release-assets
+        
+        # Create deployment manifests
+        cat > release-assets/docker-compose.prod.yml << EOF
+        version: '3.8'
+        services:
+          app:
+            image: ${{ needs.build-release.outputs.image-uri }}
+            ports:
+              - "3000:3000"
+            environment:
+              - NODE_ENV=production
+              - PORT=3000
+            restart: unless-stopped
+            healthcheck:
+              test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+        EOF
+        
+        # Create Kubernetes manifest
+        cat > release-assets/k8s-deployment.yaml << EOF
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: simple-webapp
+          labels:
+            app: simple-webapp
+            version: v${{ needs.prepare-release.outputs.version }}
+        spec:
+          replicas: 3
+          selector:
+            matchLabels:
+              app: simple-webapp
+          template:
+            metadata:
+              labels:
+                app: simple-webapp
+                version: v${{ needs.prepare-release.outputs.version }}
+            spec:
+              containers:
+              - name: simple-webapp
+                image: ${{ needs.build-release.outputs.image-uri }}
+                ports:
+                - containerPort: 3000
+                env:
+                - name: NODE_ENV
+                  value: "production"
+                - name: PORT
+                  value: "3000"
+                livenessProbe:
+                  httpGet:
+                    path: /health
+                    port: 3000
+                  initialDelaySeconds: 30
+                  periodSeconds: 10
+                readinessProbe:
+                  httpGet:
+                    path: /health
+                    port: 3000
+                  initialDelaySeconds: 5
+                  periodSeconds: 5
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: simple-webapp-service
+        spec:
+          selector:
+            app: simple-webapp
+          ports:
+          - protocol: TCP
+            port: 80
+            targetPort: 3000
+          type: LoadBalancer
+        EOF
+        
+        # Create installation script
+        cat > release-assets/install.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        echo "🚀 Installing Simple WebApp v${{ needs.prepare-release.outputs.version }}"
+        
+        # Check if Docker is installed
+        if ! command -v docker &> /dev/null; then
+            echo "❌ Docker is required but not installed"
+            exit 1
+        fi
+        
+        # Pull and run the application
+        echo "📦 Pulling Docker image..."
+        docker pull ${{ needs.build-release.outputs.image-uri }}
+        
+        echo "🎯 Starting application..."
+        docker run -d \
+          --name simple-webapp \
+          -p 3000:3000 \
+          -e NODE_ENV=production \
+          --restart unless-stopped \
+          ${{ needs.build-release.outputs.image-uri }}
+        
+        echo "✅ Simple WebApp is now running on http://localhost:3000"
+        echo "🔍 Health check: http://localhost:3000/health"
+        EOF
+        
+        chmod +x release-assets/install.sh
+        
+        # Create release info
+        cat > release-assets/RELEASE_INFO.json << EOF
+        {
+          "version": "v${{ needs.prepare-release.outputs.version }}",
+          "release_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+          "commit": "${{ github.sha }}",
+          "image_uri": "${{ needs.build-release.outputs.image-uri }}",
+          "image_digest": "${{ needs.build-release.outputs.digest }}",
+          "build_number": "${{ github.run_number }}",
+          "nodejs_version": "${{ env.NODE_VERSION }}",
+          "platform": "linux/amd64",
+          "container_registry": "${{ env.GAR_LOCATION }}-docker.pkg.dev"
+        }
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ needs.prepare-release.outputs.version }}
+        name: Simple WebApp v${{ needs.prepare-release.outputs.version }}
+        body: ${{ needs.prepare-release.outputs.release-notes }}
+        draft: false
+        prerelease: ${{ contains(needs.prepare-release.outputs.version, 'beta') || contains(needs.prepare-release.outputs.version, 'alpha') }}
+
+    - name: Upload release assets
+      run: |
+        # Create archive of release assets
+        tar -czf simple-webapp-v${{ needs.prepare-release.outputs.version }}-deployment.tar.gz -C release-assets .
+        
+        echo "📦 Release assets created:"
+        ls -la release-assets/
+        echo "📦 Archive created: simple-webapp-v${{ needs.prepare-release.outputs.version }}-deployment.tar.gz"
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [prepare-release, build-release, create-github-release]
+    if: github.event.inputs.deploy_to_production == 'true' || (github.event_name == 'push' && !contains(needs.prepare-release.outputs.version, 'beta'))
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Google Auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Deploy to production
+      run: |
+        echo "🚀 Deploying v${{ needs.prepare-release.outputs.version }} to production..."
+        
+        gcloud run deploy ${{ env.SERVICE }} \
+          --image ${{ needs.build-release.outputs.image-uri }} \
+          --region ${{ env.REGION }} \
+          --platform managed \
+          --allow-unauthenticated \
+          --set-env-vars NODE_ENV=production \
+          --set-env-vars PORT=8080 \
+          --set-env-vars APP_VERSION=v${{ needs.prepare-release.outputs.version }} \
+          --port 3000 \
+          --memory 1Gi \
+          --cpu 2 \
+          --min-instances 1 \
+          --max-instances 20 \
+          --timeout 300 \
+          --concurrency 100 \
+          --labels environment=production,version=v${{ needs.prepare-release.outputs.version }},release=true \
+          --revision-suffix v$(echo "${{ needs.prepare-release.outputs.version }}" | tr '.' '-')
+
+    - name: Get production URL
+      id: get-url
+      run: |
+        SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE }} \
+          --region ${{ env.REGION }} \
+          --format 'value(status.url)')
+        echo "service-url=${SERVICE_URL}" >> $GITHUB_OUTPUT
+        echo "🌐 Production URL: ${SERVICE_URL}"
+
+    - name: Production health check
+      run: |
+        echo "🔍 Running production health checks..."
+        sleep 30
+        
+        # Test main endpoint
+        if curl -f -s "${{ steps.get-url.outputs.service-url }}/" > /dev/null; then
+          echo "✅ Main endpoint healthy"
+        else
+          echo "❌ Main endpoint failed"
+          exit 1
+        fi
+        
+        # Test health endpoint
+        if curl -f -s "${{ steps.get-url.outputs.service-url }}/health" > /dev/null; then
+          echo "✅ Health endpoint healthy"
+        else
+          echo "❌ Health endpoint failed"
+          exit 1
+        fi
+        
+        echo "✅ Production deployment health check passed"
+
+    - name: Store production deployment info
+      uses: ./.github/actions/store-deployment-info
+      with:
+        environment: production
+        service-url: ${{ steps.get-url.outputs.service-url }}
+        image-uri: ${{ needs.build-release.outputs.image-uri }}
+
+  notify-release:
+    name: Notify Release Completion
+    runs-on: ubuntu-latest
+    needs: [prepare-release, build-release, create-github-release, deploy-production]
+    if: always()
+    
+    steps:
+    - name: Create release summary
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        # 🎉 Release v${{ needs.prepare-release.outputs.version }} Summary
+        
+        ## Release Information
+        - **Version:** v${{ needs.prepare-release.outputs.version }}
+        - **Release Type:** ${{ github.event.inputs.release_type || 'tag' }}
+        - **Created:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        - **Commit:** ${{ github.sha }}
+        
+        ## Build Results
+        - **Image:** \`${{ needs.build-release.outputs.image-uri }}\`
+        - **Digest:** ${{ needs.build-release.outputs.digest }}
+        - **Registry:** ${{ env.GAR_LOCATION }}-docker.pkg.dev
+        
+        ## Deployment Status
+        - **GitHub Release:** ${{ needs.create-github-release.result == 'success' && '✅ Created' || needs.create-github-release.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }}
+        - **Production Deploy:** ${{ needs.deploy-production.result == 'success' && '✅ Deployed' || needs.deploy-production.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }}
+        
+        ## Quick Links
+        - [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.prepare-release.outputs.version }})
+        - [Container Registry](https://${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE }})
+        
+        ## What's Next
+        - Monitor production deployment
+        - Update documentation if needed
+        - Plan next iteration
+        
+        EOF

@@ -78,6 +78,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with: 
+        submodules: false
 
     - name: Google Auth
       uses: google-github-actions/auth@v2
@@ -107,6 +109,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with: 
+        submodules: false
       
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -251,9 +255,12 @@ jobs:
     needs: [prepare-test-environment, run-tests]
     if: always() && needs.prepare-test-environment.result == 'success'
     
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with: 
+        submodules: false
 
     - name: Google Auth
       uses: google-github-actions/auth@v2

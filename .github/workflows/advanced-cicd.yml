@@ -63,6 +63,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        submodules: false
 
     - name: Detect file changes
       id: changes
@@ -128,6 +129,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: false
       
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -180,6 +183,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: false
       
     - name: Setup Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v4
@@ -209,6 +214,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: false
       
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -272,6 +279,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: false
 
     - name: Google Auth
       uses: google-github-actions/auth@v2
@@ -351,6 +360,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: false
 
     - name: Google Auth
       uses: google-github-actions/auth@v2
@@ -411,6 +422,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: false
 
     - name: Google Auth
       uses: google-github-actions/auth@v2

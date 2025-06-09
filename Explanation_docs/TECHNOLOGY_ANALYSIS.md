@@ -2,7 +2,7 @@
 
 ## Methodology
 
-The technology selection process for this project takes a practical approach that balances technical excellence with real-world constraints that development teams face in production environments. Rather than selecting technologies based only on technical specifications or popularity, each decision considers implementation complexity, maintenance overhead, cost implications, and team capability requirements.
+The technology selection process for this project takes a practical approach that balances technical excellence with real-world constraints that development teams face in production environments. Rather than selecting technologies based only on technical specifications or popularity, each decision considers implementation complexity, maintenance overhead, cost implications, and team capability requirements. When choosing technologies for this implementation, I evaluated multiple options for each component. My hands-on testing of different CI/CD platforms, cloud services, and development tools led to the selections described in this analysis.
 
 ### Evaluation Framework
 

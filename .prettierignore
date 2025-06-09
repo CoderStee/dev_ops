@@ -1,0 +1,32 @@
+# Generated files
+*.md
+docs/
+README*
+CHANGELOG*
+LICENSE*
+
+# Build and distribution
+dist/
+build/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Environment and config files
+.env*
+*.log
+
+# Package files
+package-lock.json
+yarn.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db

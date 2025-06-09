@@ -1,0 +1,151 @@
+name: 'Store Deployment Information'
+description: 'Stores deployment information and test results in Google Cloud Storage for persistence and auditing'
+author: 'DevOps Assessment Team'
+
+inputs:
+  environment:
+    description: 'The deployment environment (development, testing, production)'
+    required: true
+  service-url:
+    description: 'The deployed service URL'
+    required: true
+  image-uri:
+    description: 'The Docker image URI used for deployment'
+    required: true
+
+outputs:
+  storage-path:
+    description: 'The Cloud Storage path where deployment info was stored'
+    value: ${{ steps.store-info.outputs.storage-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Generate deployment metadata
+      id: generate-metadata
+      shell: bash
+      run: |
+        # Create deployment info JSON
+        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        DEPLOYMENT_ID="${{ github.sha }}-${{ inputs.environment }}-$(date +%s)"
+        
+        cat > deployment-info.json << EOF
+        {
+          "deployment_id": "${DEPLOYMENT_ID}",
+          "timestamp": "${TIMESTAMP}",
+          "environment": "${{ inputs.environment }}",
+          "service_url": "${{ inputs.service-url }}",
+          "image_uri": "${{ inputs.image-uri }}",
+          "commit_sha": "${{ github.sha }}",
+          "commit_message": "${{ github.event.head_commit.message }}",
+          "actor": "${{ github.actor }}",
+          "workflow_run_id": "${{ github.run_id }}",
+          "workflow_run_number": "${{ github.run_number }}",
+          "repository": "${{ github.repository }}",
+          "branch": "${{ github.ref_name }}"
+        }
+        EOF
+        
+        echo "deployment-id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+        echo "timestamp=${TIMESTAMP}" >> $GITHUB_OUTPUT
+
+    - name: Store deployment information
+      id: store-info
+      shell: bash
+      run: |
+        # Create storage path
+        STORAGE_PATH="deployments/${{ inputs.environment }}/${{ steps.generate-metadata.outputs.deployment-id }}.json"
+        BUCKET_NAME="${{ env.PROJECT_ID }}-deployment-logs"
+        
+        # Create bucket if it doesn't exist
+        gsutil mb gs://${BUCKET_NAME} 2>/dev/null || true
+        
+        # Upload deployment info
+        gsutil cp deployment-info.json gs://${BUCKET_NAME}/${STORAGE_PATH}
+        
+        # Set bucket lifecycle to retain logs for 90 days
+        cat > lifecycle.json << EOF
+        {
+          "lifecycle": {
+            "rule": [
+              {
+                "action": {"type": "Delete"},
+                "condition": {"age": 90}
+              }
+            ]
+          }
+        }
+        EOF
+        
+        gsutil lifecycle set lifecycle.json gs://${BUCKET_NAME} 2>/dev/null || true
+        
+        echo "storage-path=gs://${BUCKET_NAME}/${STORAGE_PATH}" >> $GITHUB_OUTPUT
+        echo "bucket-name=${BUCKET_NAME}" >> $GITHUB_OUTPUT
+
+    - name: Update deployment status
+      shell: bash
+      run: |
+        # Test the deployed service
+        echo "Testing deployment at: ${{ inputs.service-url }}"
+        
+        # Wait for service to be ready
+        sleep 15
+        
+        # Test main endpoint
+        if curl -f -s "${{ inputs.service-url }}/" > /dev/null; then
+          HEALTH_STATUS="healthy"
+          echo "✅ Main endpoint is responding"
+        else
+          HEALTH_STATUS="unhealthy"
+          echo "❌ Main endpoint is not responding"
+        fi
+        
+        # Test health endpoint
+        if curl -f -s "${{ inputs.service-url }}/health" > /dev/null; then
+          echo "✅ Health endpoint is responding"
+        else
+          echo "❌ Health endpoint is not responding"
+          HEALTH_STATUS="unhealthy"
+        fi
+        
+        # Create status update
+        cat > status-update.json << EOF
+        {
+          "deployment_id": "${{ steps.generate-metadata.outputs.deployment-id }}",
+          "status": "${HEALTH_STATUS}",
+          "verified_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+          "endpoints_tested": [
+            "${{ inputs.service-url }}/",
+            "${{ inputs.service-url }}/health"
+          ]
+        }
+        EOF
+        
+        # Upload status update
+        BUCKET_NAME="${{ steps.store-info.outputs.bucket-name }}"
+        STATUS_PATH="deployments/${{ inputs.environment }}/${{ steps.generate-metadata.outputs.deployment-id }}-status.json"
+        gsutil cp status-update.json gs://${BUCKET_NAME}/${STATUS_PATH}
+        
+        echo "📊 Deployment verification complete - Status: ${HEALTH_STATUS}"
+
+    - name: Create deployment summary
+      shell: bash
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🚀 Deployment Summary
+        
+        **Environment:** ${{ inputs.environment }}
+        **Service URL:** ${{ inputs.service-url }}
+        **Image:** \`${{ inputs.image-uri }}\`
+        **Deployment ID:** ${{ steps.generate-metadata.outputs.deployment-id }}
+        **Timestamp:** ${{ steps.generate-metadata.outputs.timestamp }}
+        
+        ### Storage Location
+        - **Deployment Info:** ${{ steps.store-info.outputs.storage-path }}
+        - **Bucket:** ${{ steps.store-info.outputs.bucket-name }}
+        
+        ### Quick Tests
+        - Main endpoint: ${{ inputs.service-url }}/
+        - Health check: ${{ inputs.service-url }}/health
+        
+        EOF

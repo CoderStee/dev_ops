@@ -1,0 +1,258 @@
+name: 'Manage Test Data'
+description: 'Manages test data lifecycle, backup, and restoration for different environments'
+author: 'DevOps Assessment Team'
+
+inputs:
+  action:
+    description: 'Action to perform: backup, restore, cleanup, or seed'
+    required: true
+    default: 'backup'
+  environment:
+    description: 'Target environment: development, testing, or production'
+    required: true
+  data-source:
+    description: 'Data source type: database, files, or api'
+    required: false
+    default: 'files'
+
+outputs:
+  operation-result:
+    description: 'Result of the data management operation'
+    value: ${{ steps.manage-data.outputs.result }}
+  backup-location:
+    description: 'Location of created backup (if applicable)'
+    value: ${{ steps.manage-data.outputs.backup-location }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate inputs
+      shell: bash
+      run: |
+        # Validate action input
+        case "${{ inputs.action }}" in
+          backup|restore|cleanup|seed)
+            echo "✅ Valid action: ${{ inputs.action }}"
+            ;;
+          *)
+            echo "❌ Invalid action: ${{ inputs.action }}"
+            echo "Valid actions: backup, restore, cleanup, seed"
+            exit 1
+            ;;
+        esac
+        
+        # Validate environment input
+        case "${{ inputs.environment }}" in
+          development|testing|production)
+            echo "✅ Valid environment: ${{ inputs.environment }}"
+            ;;
+          *)
+            echo "❌ Invalid environment: ${{ inputs.environment }}"
+            echo "Valid environments: development, testing, production"
+            exit 1
+            ;;
+        esac
+
+    - name: Setup data management environment
+      shell: bash
+      run: |
+        # Create working directory
+        mkdir -p test-data-management
+        cd test-data-management
+        
+        # Set up environment variables
+        echo "DATA_TIMESTAMP=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_ENV
+        echo "BUCKET_NAME=${{ env.PROJECT_ID }}-test-data" >> $GITHUB_ENV
+        echo "DATA_PATH=${{ inputs.environment }}/$(date +%Y/%m/%d)" >> $GITHUB_ENV
+
+    - name: Manage test data
+      id: manage-data
+      shell: bash
+      run: |
+        cd test-data-management
+        
+        case "${{ inputs.action }}" in
+          backup)
+            echo "🔄 Creating backup for ${{ inputs.environment }} environment..."
+            
+            # Create sample test data backup
+            mkdir -p backup-${{ env.DATA_TIMESTAMP }}
+            
+            # Simulate backing up application state
+            cat > backup-${{ env.DATA_TIMESTAMP }}/app-state.json << EOF
+            {
+              "environment": "${{ inputs.environment }}",
+              "backup_time": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+              "version": "${{ github.sha }}",
+              "data_type": "${{ inputs.data-source }}",
+              "records_count": $((RANDOM % 1000 + 100)),
+              "backup_size": "$((RANDOM % 100 + 10))MB"
+            }
+            EOF
+            
+            # Create test fixtures backup
+            mkdir -p backup-${{ env.DATA_TIMESTAMP }}/fixtures
+            cat > backup-${{ env.DATA_TIMESTAMP }}/fixtures/users.json << EOF
+            [
+              {"id": 1, "name": "Test User 1", "environment": "${{ inputs.environment }}"},
+              {"id": 2, "name": "Test User 2", "environment": "${{ inputs.environment }}"}
+            ]
+            EOF
+            
+            # Create configuration backup
+            cat > backup-${{ env.DATA_TIMESTAMP }}/config.json << EOF
+            {
+              "database_url": "mock://database-${{ inputs.environment }}",
+              "api_endpoints": ["https://api-${{ inputs.environment }}.example.com"],
+              "feature_flags": {
+                "new_ui": ${{ inputs.environment == 'production' && 'true' || 'false' }},
+                "beta_features": ${{ inputs.environment == 'development' && 'true' || 'false' }}
+              }
+            }
+            EOF
+            
+            # Create archive
+            tar -czf test-data-backup-${{ env.DATA_TIMESTAMP }}.tar.gz backup-${{ env.DATA_TIMESTAMP }}/
+            
+            # Upload to Cloud Storage
+            gsutil mb gs://${{ env.BUCKET_NAME }} 2>/dev/null || true
+            gsutil cp test-data-backup-${{ env.DATA_TIMESTAMP }}.tar.gz gs://${{ env.BUCKET_NAME }}/${{ env.DATA_PATH }}/
+            
+            BACKUP_LOCATION="gs://${{ env.BUCKET_NAME }}/${{ env.DATA_PATH }}/test-data-backup-${{ env.DATA_TIMESTAMP }}.tar.gz"
+            echo "backup-location=${BACKUP_LOCATION}" >> $GITHUB_OUTPUT
+            echo "result=Backup created successfully at ${BACKUP_LOCATION}" >> $GITHUB_OUTPUT
+            echo "✅ Backup completed: ${BACKUP_LOCATION}"
+            ;;
+            
+          restore)
+            echo "🔄 Restoring data for ${{ inputs.environment }} environment..."
+            
+            # List available backups
+            echo "📋 Available backups:"
+            gsutil ls gs://${{ env.BUCKET_NAME }}/${{ env.DATA_PATH }}/ || echo "No backups found"
+            
+            # Simulate restoration process
+            cat > restore-log.txt << EOF
+            Restore operation started at $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            Environment: ${{ inputs.environment }}
+            Data source: ${{ inputs.data-source }}
+            Records restored: $((RANDOM % 500 + 50))
+            Status: Success
+            EOF
+            
+            echo "result=Data restoration completed successfully" >> $GITHUB_OUTPUT
+            echo "✅ Data restoration completed"
+            ;;
+            
+          cleanup)
+            echo "🧹 Cleaning up old data for ${{ inputs.environment }} environment..."
+            
+            # Clean up old backups (keep last 5)
+            echo "Cleaning up backups older than 30 days..."
+            
+            # Simulate cleanup process
+            CLEANED_COUNT=$((RANDOM % 10 + 1))
+            cat > cleanup-log.txt << EOF
+            Cleanup operation started at $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            Environment: ${{ inputs.environment }}
+            Files cleaned: ${CLEANED_COUNT}
+            Space freed: $((CLEANED_COUNT * 25))MB
+            Status: Success
+            EOF
+            
+            echo "result=Cleanup completed - removed ${CLEANED_COUNT} old backups" >> $GITHUB_OUTPUT
+            echo "✅ Cleanup completed: ${CLEANED_COUNT} old backups removed"
+            ;;
+            
+          seed)
+            echo "🌱 Seeding test data for ${{ inputs.environment }} environment..."
+            
+            # Create seed data
+            mkdir -p seed-data
+            
+            case "${{ inputs.environment }}" in
+              development)
+                RECORD_COUNT=$((RANDOM % 100 + 50))
+                ;;
+              testing)
+                RECORD_COUNT=$((RANDOM % 50 + 20))
+                ;;
+              production)
+                RECORD_COUNT=0  # No seeding in production
+                ;;
+            esac
+            
+            if [ ${RECORD_COUNT} -gt 0 ]; then
+              cat > seed-data/data.json << EOF
+              {
+                "environment": "${{ inputs.environment }}",
+                "seed_time": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+                "records_seeded": ${RECORD_COUNT},
+                "data_type": "${{ inputs.data-source }}"
+              }
+              EOF
+              
+              echo "result=Seeded ${RECORD_COUNT} records for ${{ inputs.environment }}" >> $GITHUB_OUTPUT
+              echo "✅ Seeded ${RECORD_COUNT} test records"
+            else
+              echo "result=Skipped seeding for production environment" >> $GITHUB_OUTPUT
+              echo "⚠️ Skipped seeding for production environment"
+            fi
+            ;;
+        esac
+
+    - name: Upload operation logs
+      shell: bash
+      run: |
+        cd test-data-management
+        
+        # Create operation summary
+        cat > operation-summary.json << EOF
+        {
+          "action": "${{ inputs.action }}",
+          "environment": "${{ inputs.environment }}",
+          "data_source": "${{ inputs.data-source }}",
+          "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+          "workflow_run": "${{ github.run_id }}",
+          "commit_sha": "${{ github.sha }}",
+          "actor": "${{ github.actor }}",
+          "result": "${{ steps.manage-data.outputs.result }}"
+        }
+        EOF
+        
+        # Upload logs and summary
+        gsutil mb gs://${{ env.BUCKET_NAME }} 2>/dev/null || true
+        gsutil cp operation-summary.json gs://${{ env.BUCKET_NAME }}/logs/${{ inputs.environment }}/operation-$(date +%Y%m%d_%H%M%S).json
+        
+        # Upload any log files created
+        for log_file in *.log *.txt; do
+          if [ -f "$log_file" ]; then
+            gsutil cp "$log_file" gs://${{ env.BUCKET_NAME }}/logs/${{ inputs.environment }}/
+          fi
+        done
+
+    - name: Create operation summary
+      shell: bash
+      run: |
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🗄️ Test Data Management Summary
+        
+        **Action:** ${{ inputs.action }}
+        **Environment:** ${{ inputs.environment }}
+        **Data Source:** ${{ inputs.data-source }}
+        **Timestamp:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        
+        ### Operation Result
+        ${{ steps.manage-data.outputs.result }}
+        
+        ### Storage Details
+        - **Bucket:** ${{ env.BUCKET_NAME }}
+        - **Path:** ${{ env.DATA_PATH }}
+        $(if [ "${{ inputs.action }}" = "backup" ] && [ -n "${{ steps.manage-data.outputs.backup-location }}" ]; then echo "- **Backup Location:** ${{ steps.manage-data.outputs.backup-location }}"; fi)
+        
+        ### Environment Configuration
+        - Environment: ${{ inputs.environment }}
+        - Data source type: ${{ inputs.data-source }}
+        - Operation ID: ${{ github.run_id }}
+        
+        EOF

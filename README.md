@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-# dev_ops
-=======
-# Simple WebApp: Enterprise DevOps Implementation and Modern Software Delivery Excellence
+# Simple WebApp: DevOps Implementation and Modern Software Delivery
 
 ## Project Overview and Strategic Implementation
 
@@ -238,4 +235,3 @@ The project demonstrates that advanced DevOps capabilities are achievable throug
 **Container Registry Integration**: Google Cloud Artifact Registry  
 **Production Deployment Platform**: Google Cloud Run
 
->>>>>>> local-implementation

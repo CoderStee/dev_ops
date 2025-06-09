@@ -1,0 +1,55 @@
+# Dependencies
+node_modules
+npm-debug.log
+.npm
+
+# Git
+.git
+.gitignore
+
+# Generated files
+README.md
+*.md
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Testing
+.nyc_output
+coverage
+.coverage
+**/*.test.js
+**/*.spec.js
+
+# IDE
+.vscode
+.idea
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Runtime
+pids
+*.pid
+
+# Build artifacts
+dist
+build
+out
+
+# Temporary files
+tmp
+temp
+*.tmp
+
+# ESLint and Prettier cache
+.eslintcache
+.prettier-cache

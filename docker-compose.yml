@@ -1,0 +1,62 @@
+version: '3'
+
+# Common configuration to be extended
+x-app-common: &app-common
+  restart: unless-stopped
+  ports:
+    - "3000:3000"
+
+services:
+  # Development environment
+  dev:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: development
+        APP_VERSION: 1.0.0
+        BUILD_NUMBER: dev-${COMPOSE_PROJECT_NAME:-local}
+    image: simple-webapp:dev-1.0.0
+    container_name: simple-webapp-dev
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+    volumes:
+      - ./src:/app/src
+    profiles: [dev, default]
+
+  # Testing environment  
+  test:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: testing
+        APP_VERSION: 1.0.0
+        BUILD_NUMBER: test-${COMPOSE_PROJECT_NAME:-local}
+    image: simple-webapp:test-1.0.0
+    container_name: simple-webapp-test
+    environment:
+      - NODE_ENV=testing
+      - PORT=3000
+    profiles: [test]
+
+  # Production environment
+  prod:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
+        APP_VERSION: 1.0.0
+        BUILD_NUMBER: prod-${COMPOSE_PROJECT_NAME:-local}
+    image: simple-webapp:prod-1.0.0
+    container_name: simple-webapp-prod
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    # No volumes in production for security and stability
+    profiles: [prod]
